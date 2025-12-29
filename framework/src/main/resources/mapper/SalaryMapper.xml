@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.wangchai.mapper.SalaryMapper" >
+    <!-- 统计基础薪资和罚款总和的SQL -->
+    <select id="sumBaseAndFine" resultType="com.wangchai.domain.vo.SalaryCountVo" >
+        SELECT
+        SUM(BASE) AS totalBase,
+        SUM(FINE) AS totalFine
+        FROM SALARY
+    </select>
+
+    <!-- 分页+条件查询的SQL -->
+    <!-- 带动态查询条件的查询语句 -->
+    <select id="selectSalaryVoPage" resultType="com.wangchai.domain.vo.SalaryVo">
+        SELECT
+        s.SALARY_ID AS salaryId,
+        e.NAME AS name,
+        d.NAME AS deptName,
+        s.BASE AS base,
+        s.SUBSIDY AS subsidy,
+        s.FINE AS fine,
+        s.TOTAL AS total
+        FROM SALARY s
+        LEFT JOIN EMP e ON s.EMP_ID = e.EMP_ID
+        LEFT JOIN DEPT d ON e.DEPT_ID = d.DEPT_ID
+        <!-- 动态WHERE条件：仅当参数非空时生效 -->
+        <where>
+            <!-- 薪资编号：精确匹配（非空时生效） -->
+            <if test="dto.salaryId != null">
+                s.SALARY_ID = #{dto.salaryId}
+            </if>
+            <!-- 员工姓名：模糊匹配（非空且非空字符串时生效） -->
+            <if test="dto.name != null and dto.name != ''">
+                AND e.NAME LIKE '%' || #{dto.name} || '%'
+            </if>
+            <!-- 部门名称列表：IN查询（非空且非空列表时生效） -->
+            <if test="dto.deptName != null and dto.deptName.size() > 0">
+                AND d.NAME IN
+                <foreach collection="dto.deptName" item="dept" open="(" separator="," close=")">
+                    #{dept}
+                </foreach>
+            </if>
+        </where>
+        order by s.SALARY_ID
+    </select>
+
+    <!-- 单个SELECT查询所有字段（核心方案） -->
+
+    <select id="SalaryDeptGapData" resultType="com.wangchai.domain.vo.SalaryGapVo">
+        SELECT
+            d.NAME AS deptName,
+            -- 核心修改1：替换s.TOTAL为手动计算薪资总额，保留ROUND和SUM逻辑
+            ROUND(SUM(NVL(NVL(s.BASE, 0) + NVL(s.SUBSIDY, 0) - NVL(s.FINE, 0), 0)), 2) AS totalSalary,
+            -- 部门基础薪资总和（保留原有逻辑，无修改）
+            ROUND(SUM(NVL(s.BASE, 0)), 2) AS totalBase,
+            -- 部门补贴总和（保留原有逻辑，无修改）
+            ROUND(SUM(NVL(s.SUBSIDY, 0)), 2) AS totalBonus,
+            -- 部门罚款总和（保留原有逻辑，无修改）
+            ROUND(SUM(NVL(s.FINE, 0)), 2) AS totalFine,
+            -- 核心修改2：整体平均薪资计算中，替换s.TOTAL为手动计算式
+            ROUND(
+                    NVL(
+                            (SUM(SUM(NVL(NVL(s.BASE, 0) + NVL(s.SUBSIDY, 0) - NVL(s.FINE, 0), 0))) OVER()) /
+                            (SUM(COUNT(DISTINCT e.EMP_ID)) OVER()),
+                            0
+                    ), 2
+            ) AS averageSalary,
+            -- 核心修改3：部门平均与整体平均的差值计算中，替换s.TOTAL为手动计算式
+            ROUND(
+                    CASE
+                        WHEN COUNT(DISTINCT e.EMP_ID) = 0 THEN 0
+                        ELSE SUM(NVL(NVL(s.BASE, 0) + NVL(s.SUBSIDY, 0) - NVL(s.FINE, 0), 0)) / COUNT(DISTINCT e.EMP_ID)
+                        END -
+                    NVL(
+                            (SUM(SUM(NVL(NVL(s.BASE, 0) + NVL(s.SUBSIDY, 0) - NVL(s.FINE, 0), 0))) OVER()) /
+                            (SUM(COUNT(DISTINCT e.EMP_ID)) OVER()),
+                            0
+                    ), 2
+            ) AS value
+        FROM
+            DEPT d
+                -- 左连接保证无员工的部门也显示（保留原有逻辑）
+                LEFT JOIN EMP e ON d.DEPT_ID = e.DEPT_ID
+                -- 左连接保证无薪资的员工也统计（保留原有逻辑）
+                LEFT JOIN SALARY s ON e.EMP_ID = s.EMP_ID
+        WHERE d.NAME NOT IN ('董事会', '保安处')
+        -- 按部门主键+名称分组（保留原有逻辑，避免分组丢失）
+        GROUP BY
+            d.DEPT_ID, d.NAME
+        -- 按部门ID排序（保留原有逻辑，结果有序）
+        ORDER BY
+            d.DEPT_ID
+    </select>
+
+
+
+</mapper>
